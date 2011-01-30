@@ -144,14 +144,14 @@ namespace PDF2JPEG
                     if (current == "<<")
                     {
                         ReadToken(fs);
-                        var image = false;
+                        var jpeg = false;
                         int len = 0;
                         while (current != null && current != ">>")
                         {
-                            if (current == "/Image")
+                            if (current == "/DCTDecode")
                             {
                                 ReadToken(fs);
-                                image = true;
+                                jpeg = true;
                             }
                             else if (current == "/Length")
                             {
@@ -185,7 +185,7 @@ namespace PDF2JPEG
                         if (current == "stream")
                         {
                             if (cur == 0x0d) cur = fs.ReadByte();
-                            if (image)
+                            if (jpeg)
                             {
                                 Invoke(new Action(() =>
                                 {
