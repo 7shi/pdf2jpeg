@@ -68,15 +68,14 @@ namespace PDF2JPEG
         }
 
         int cur, objno;
-        string token2, token1, token0;
+        string token2, token1, current;
 
-        private string ReadToken(FileStream fs)
+        private void ReadToken(FileStream fs)
         {
             token2 = token1;
-            token1 = token0;
-            token0 = ReadTokenInternal(fs);
-            if (token0 == "obj") int.TryParse(token2, out objno);
-            return token0;
+            token1 = current;
+            current = ReadTokenInternal(fs);
+            if (current == "obj") int.TryParse(token2, out objno);
         }
 
         private string ReadTokenInternal(FileStream fs)
@@ -128,7 +127,7 @@ namespace PDF2JPEG
         private void Parse(string file)
         {
             cur = objno = 0;
-            token2 = token1 = token0 = null;
+            token2 = token1 = current = null;
             int page = 1;
             var dir1 = Path.GetDirectoryName(file);
             var name = Path.GetFileNameWithoutExtension(file);
@@ -139,26 +138,51 @@ namespace PDF2JPEG
             var dict = new Dictionary<int, int>();
             using (var fs = new FileStream(file, FileMode.Open))
             {
-                string token;
-                while ((token = ReadToken(fs)) != null)
+                ReadToken(fs);
+                while (current != null)
                 {
-                    if (token == "<<")
+                    if (current == "<<")
                     {
+                        ReadToken(fs);
                         var image = false;
                         int len = 0;
-                        for (; token != ">>"; token = ReadToken(fs))
+                        while (current != null && current != ">>")
                         {
-                            if (token == "/Image")
-                                image = true;
-                            else if (token == "/Length")
-                                len = int.Parse(ReadToken(fs));
-                            else if (token == "/Name")
+                            if (current == "/Image")
+                            {
                                 ReadToken(fs);
-                            else if (token.StartsWith("/Obj"))
-                                dict[page] = int.Parse(ReadToken(fs));
+                                image = true;
+                            }
+                            else if (current == "/Length")
+                            {
+                                ReadToken(fs);
+                                len = int.Parse(current);
+                                ReadToken(fs);
+                                if (current == "0")
+                                {
+                                    ReadToken(fs);
+                                    if (current != "R") throw new Exception("R required");
+                                    ReadToken(fs);
+                                    len = 0;
+                                    ///
+                                }
+                            }
+                            else if (current == "/Name")
+                            {
+                                ReadToken(fs);
+                                ReadToken(fs);
+                            }
+                            else if (current.StartsWith("/Obj"))
+                            {
+                                ReadToken(fs);
+                                dict[page] = int.Parse(current);
+                                ReadToken(fs);
+                            }
+                            else
+                                ReadToken(fs);
                         }
-                        token = ReadToken(fs);
-                        if (token == "stream")
+                        ReadToken(fs);
+                        if (current == "stream")
                         {
                             if (cur == 0x0d) cur = fs.ReadByte();
                             if (image)
@@ -173,9 +197,12 @@ namespace PDF2JPEG
                                 File.WriteAllBytes(fn, data);
                                 page++;
                             }
-                            cur = fs.ReadByte();
+                            cur = 0;
+                            ReadToken(fs);
                         }
                     }
+                    else
+                        ReadToken(fs);
                 }
             }
         }
