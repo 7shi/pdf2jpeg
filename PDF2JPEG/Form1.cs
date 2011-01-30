@@ -46,7 +46,7 @@ namespace PDF2JPEG
                     Invoke(new Action(() =>
                     {
                         label1.Text = string.Format("{0}/{1}: {2}", i + 1, fs.Length, fs[i]);
-                        label2.Text = "0";
+                        label2.Text = "";
                     }));
                     Parse(fs[i]);
                 }
@@ -128,7 +128,7 @@ namespace PDF2JPEG
         {
             cur = objno = 0;
             token2 = token1 = current = null;
-            int page = 1;
+            int page = 0;
             var dir1 = Path.GetDirectoryName(file);
             var name = Path.GetFileNameWithoutExtension(file);
             int p1 = name.LastIndexOf(' ');
@@ -136,6 +136,7 @@ namespace PDF2JPEG
             var dir2 = Path.Combine(dir1, name);
             if (!Directory.Exists(dir2)) Directory.CreateDirectory(dir2);
             var dict = new Dictionary<int, int>();
+            var imgs = new Dictionary<int, Tuple<long, int>>();
             using (var fs = new FileStream(file, FileMode.Open))
             {
                 ReadToken(fs);
@@ -167,6 +168,11 @@ namespace PDF2JPEG
                                     ///
                                 }
                             }
+                            else if (current == "/Page")
+                            {
+                                ReadToken(fs);
+                                page++;
+                            }
                             else if (current == "/Name")
                             {
                                 ReadToken(fs);
@@ -186,23 +192,31 @@ namespace PDF2JPEG
                         {
                             if (cur == 0x0d) cur = fs.ReadByte();
                             if (jpeg)
-                            {
-                                Invoke(new Action(() =>
-                                {
-                                    label2.Text = page.ToString();
-                                }));
-                                var fn = Path.Combine(dir2, string.Format("{0:0000}.jpg", page));
-                                var data = new byte[len];
-                                fs.Read(data, 0, len);
-                                File.WriteAllBytes(fn, data);
-                                page++;
-                            }
+                                imgs[objno] = new Tuple<long, int>(fs.Position, len);
+                            fs.Position += len;
                             cur = 0;
                             ReadToken(fs);
                         }
                     }
                     else
                         ReadToken(fs);
+                }
+                var pages = dict.Keys.ToList();
+                pages.Sort();
+                int max = pages[pages.Count - 1];
+                foreach (var p in pages)
+                {
+                    var id = dict[p];
+                    var tup = imgs[id];
+                    Invoke(new Action(() =>
+                    {
+                        label2.Text = string.Format("{0}/{1}", p, max);
+                    }));
+                    var fn = Path.Combine(dir2, string.Format("{0:0000}.jpg", p));
+                    var data = new byte[tup.Item2];
+                    fs.Position = tup.Item1;
+                    fs.Read(data, 0, data.Length);
+                    File.WriteAllBytes(fn, data);
                 }
             }
         }
