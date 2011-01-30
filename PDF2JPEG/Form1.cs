@@ -46,7 +46,7 @@ namespace PDF2JPEG
                     Invoke(new Action(() =>
                     {
                         label1.Text = string.Format("{0}/{1}: {2}", i + 1, fs.Length, fs[i]);
-                        label2.Text = "";
+                        label2.Text = "Parsing...";
                     }));
                     Parse(fs[i]);
                 }
@@ -56,6 +56,7 @@ namespace PDF2JPEG
                 Invoke(new Action(() =>
                 {
                     MessageBox.Show(ex.ToString());
+                    label2.Text += ex.Message;
                 }));
             }
             finally
@@ -163,9 +164,10 @@ namespace PDF2JPEG
                                 {
                                     ReadToken(fs);
                                     if (current != "R") throw new Exception("R required");
+                                    while (current != "endstream")
+                                        ReadToken(fs);
                                     ReadToken(fs);
                                     len = 0;
-                                    ///
                                 }
                             }
                             else if (current == "/Page")
