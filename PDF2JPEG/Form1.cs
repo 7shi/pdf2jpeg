@@ -71,12 +71,17 @@ namespace PDF2JPEG
         int cur, objno;
         string token2, token1, current;
 
-        private void ReadToken(FileStream fs)
+        private void ReadToken(FileStream fs, bool isStream = false)
         {
-            token2 = token1;
-            token1 = current;
-            current = ReadTokenInternal(fs);
-            if (current == "obj") int.TryParse(token2, out objno);
+            if (!isStream)
+            {
+                token2 = token1;
+                token1 = current;
+                current = ReadTokenInternal(fs);
+                if (current == "obj") objno = int.Parse(token2);
+            }
+            else
+                current = ReadTokenInternal(fs);
         }
 
         private string ReadTokenInternal(FileStream fs)
@@ -146,7 +151,7 @@ namespace PDF2JPEG
                     if (current == "<<")
                     {
                         ReadToken(fs);
-                        var jpeg = false;
+                        bool jpeg = false, lengthOnly = false;
                         int len = 0;
                         while (current != null && current != ">>")
                         {
@@ -157,6 +162,7 @@ namespace PDF2JPEG
                             }
                             else if (current == "/Length")
                             {
+                                var prev = token1;
                                 ReadToken(fs);
                                 len = int.Parse(current);
                                 ReadToken(fs);
@@ -164,11 +170,11 @@ namespace PDF2JPEG
                                 {
                                     ReadToken(fs);
                                     if (current != "R") throw new Exception("R required");
-                                    while (current != "endstream")
-                                        ReadToken(fs);
                                     ReadToken(fs);
                                     len = 0;
                                 }
+                                if (prev == "<<" && current == ">>")
+                                    lengthOnly = true;
                             }
                             else if (current == "/Page")
                             {
@@ -180,7 +186,7 @@ namespace PDF2JPEG
                                 ReadToken(fs);
                                 ReadToken(fs);
                             }
-                            else if (current.StartsWith("/Obj"))
+                            else if (current.StartsWith("/Obj") && current != "/ObjStm")
                             {
                                 ReadToken(fs);
                                 dict[page] = int.Parse(current);
@@ -195,7 +201,11 @@ namespace PDF2JPEG
                             if (cur == 0x0d) cur = fs.ReadByte();
                             if (jpeg)
                                 imgs[objno] = new Tuple<long, int>(fs.Position, len);
-                            fs.Position += len;
+                            if (len > 0)
+                                fs.Position += len;
+                            else
+                                while (current != "endstream")
+                                    ReadToken(fs, true);
                             cur = 0;
                             ReadToken(fs);
                         }
