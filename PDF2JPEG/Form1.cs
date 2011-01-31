@@ -131,7 +131,7 @@ namespace PDF2JPEG
             return sb.ToString();
         }
 
-        private int page, imgc;
+        private int page;
         private Dictionary<int, int> dict;
         private Dictionary<int, Tuple<long, int>> imgd;
 
@@ -139,7 +139,7 @@ namespace PDF2JPEG
         {
             cur = objno = 0;
             token2 = token1 = current = null;
-            page = imgc = 0;
+            page = 0;
             var dir1 = Path.GetDirectoryName(file);
             var name = Path.GetFileNameWithoutExtension(file);
             int p1 = name.LastIndexOf(' ');
@@ -151,8 +151,8 @@ namespace PDF2JPEG
             using (var fs = new FileStream(file, FileMode.Open))
             {
                 ReadStream(fs);
-                if (dict.Count != imgc)
-                    throw new Exception(string.Format("page count {0} != {1}", dict.Count, imgc));
+                if (dict.Count != imgd.Count)
+                    throw new Exception(string.Format("page count {0} != {1}", dict.Count, imgd.Count));
                 var pages = dict.Keys.ToList();
                 pages.Sort();
                 int max = pages[pages.Count - 1];
@@ -242,6 +242,8 @@ namespace PDF2JPEG
                 else if (current.StartsWith("/Obj"))
                 {
                     ReadToken(st);
+                    if (dict.ContainsKey(page))
+                        throw new Exception("duplicate page " + page);
                     dict[page] = int.Parse(current);
                     ReadToken(st);
                 }
@@ -269,7 +271,6 @@ namespace PDF2JPEG
                     {
                         var tup = new Tuple<long, int>(st.Position, len);
                         imgd[objno] = tup;
-                        imgc++;
                     }
                     if (len > 0)
                         st.Position += len;
