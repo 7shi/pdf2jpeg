@@ -4,6 +4,7 @@ using System.ComponentModel;
 using System.Data;
 using System.Drawing;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
 using System.Text;
 using System.Threading;
@@ -71,7 +72,7 @@ namespace PDF2JPEG
         int cur, objno;
         string token2, token1, current;
 
-        private void ReadToken(FileStream fs, bool isStream = false)
+        private void ReadToken(Stream fs, bool isStream = false)
         {
             if (!isStream)
             {
@@ -84,7 +85,7 @@ namespace PDF2JPEG
                 current = ReadTokenInternal(fs);
         }
 
-        private string ReadTokenInternal(FileStream fs)
+        private string ReadTokenInternal(Stream fs)
         {
             if (cur == 0) cur = fs.ReadByte();
             if (cur == -1) return null;
@@ -130,131 +131,154 @@ namespace PDF2JPEG
             return sb.ToString();
         }
 
+        private int page, imgc;
+        private Dictionary<int, int> dict;
+        private Dictionary<int, Tuple<long, int>> imgd;
+
         private void Parse(string file)
         {
             cur = objno = 0;
             token2 = token1 = current = null;
-            int page = 0;
+            page = imgc = 0;
             var dir1 = Path.GetDirectoryName(file);
             var name = Path.GetFileNameWithoutExtension(file);
             int p1 = name.LastIndexOf(' ');
             if (p1 > 0) name = name.Substring(0, p1);
             var dir2 = Path.Combine(dir1, name);
             if (!Directory.Exists(dir2)) Directory.CreateDirectory(dir2);
-            var dict = new Dictionary<int, int>();
-            var imgd = new Dictionary<int, Tuple<long, int>>();
-            var imgl = new List<Tuple<long, int>>();
+            dict = new Dictionary<int, int>();
+            imgd = new Dictionary<int, Tuple<long, int>>();
             using (var fs = new FileStream(file, FileMode.Open))
             {
-                ReadToken(fs);
-                while (current != null)
+                ReadStream(fs);
+                if (dict.Count != imgc)
+                    throw new Exception(string.Format("page count {0} != {1}", dict.Count, imgc));
+                var pages = dict.Keys.ToList();
+                pages.Sort();
+                int max = pages[pages.Count - 1];
+                bool rev = pages[0] == 0;
+                if (rev)
                 {
-                    if (current == "<<")
+                    pages.Reverse();
+                    max++;
+                }
+                foreach (var p in pages)
+                {
+                    var id = dict[p];
+                    var tup = imgd[id];
+                    int pn = rev ? max - p : p;
+                    Invoke(new Action(() =>
                     {
-                        ReadToken(fs);
-                        bool jpeg = false, lengthOnly = false;
-                        int len = 0;
-                        while (current != null && current != ">>")
-                        {
-                            if (current == "/DCTDecode")
-                            {
-                                ReadToken(fs);
-                                jpeg = true;
-                            }
-                            else if (current == "/Length")
-                            {
-                                var prev = token1;
-                                ReadToken(fs);
-                                len = int.Parse(current);
-                                ReadToken(fs);
-                                if (current == "0")
-                                {
-                                    ReadToken(fs);
-                                    if (current != "R") throw new Exception("R required");
-                                    ReadToken(fs);
-                                    len = 0;
-                                }
-                                if (prev == "<<" && current == ">>")
-                                    lengthOnly = true;
-                            }
-                            else if (current == "/Page")
-                            {
-                                ReadToken(fs);
-                                page++;
-                            }
-                            else if (current == "/Name")
-                            {
-                                ReadToken(fs);
-                                ReadToken(fs);
-                            }
-                            else if (current.StartsWith("/Obj") && current != "/ObjStm")
-                            {
-                                ReadToken(fs);
-                                dict[page] = int.Parse(current);
-                                ReadToken(fs);
-                            }
-                            else
-                                ReadToken(fs);
-                        }
-                        ReadToken(fs);
-                        if (current == "stream")
-                        {
-                            if (cur == 0x0d) cur = fs.ReadByte();
-                            if (jpeg)
-                            {
-                                var tup = new Tuple<long, int>(fs.Position, len);
-                                imgd[objno] = tup;
-                                imgl.Add(tup);
-                            }
-                            if (len > 0)
-                                fs.Position += len;
-                            else
-                                while (current != "endstream")
-                                    ReadToken(fs, true);
-                            cur = 0;
-                            ReadToken(fs);
-                        }
+                        label2.Text = string.Format("{0}/{1}", pn, max);
+                    }));
+                    var fn = Path.Combine(dir2, string.Format("{0:0000}.jpg", pn));
+                    var data = new byte[tup.Item2];
+                    fs.Position = tup.Item1;
+                    fs.Read(data, 0, data.Length);
+                    File.WriteAllBytes(fn, data);
+                }
+            }
+        }
+
+        private void ReadStream(Stream st)
+        {
+            ReadToken(st);
+            while (current != null)
+            {
+                if (current == "<<")
+                    ReadDictionary(st);
+                else
+                    ReadToken(st);
+            }
+        }
+
+        private void ReadDictionary(Stream st)
+        {
+            ReadToken(st);
+            bool jpeg = false, flate = false, objstm = false;
+            int len = 0;
+            while (current != null && current != ">>")
+            {
+                if (current == "<<")
+                    ReadDictionary(st);
+                else if (current == "/DCTDecode")
+                {
+                    ReadToken(st);
+                    jpeg = true;
+                }
+                else if (current == "/FlateDecode")
+                {
+                    ReadToken(st);
+                    flate = true;
+                }
+                else if (current == "/ObjStm")
+                {
+                    ReadToken(st);
+                    objstm = true;
+                }
+                else if (current == "/Length")
+                {
+                    ReadToken(st);
+                    len = int.Parse(current);
+                    ReadToken(st);
+                    if (current == "0")
+                    {
+                        ReadToken(st);
+                        if (current != "R") throw new Exception("R required");
+                        ReadToken(st);
+                        len = 0;
+                    }
+                }
+                else if (current == "/Page")
+                {
+                    ReadToken(st);
+                    page++;
+                }
+                else if (current == "/Name")
+                {
+                    ReadToken(st);
+                    ReadToken(st);
+                }
+                else if (current.StartsWith("/Obj"))
+                {
+                    ReadToken(st);
+                    dict[page] = int.Parse(current);
+                    ReadToken(st);
+                }
+                else
+                    ReadToken(st);
+            }
+            ReadToken(st);
+            if (current == "stream")
+            {
+                if (cur == 0x0d) cur = st.ReadByte();
+                if (objstm)
+                {
+                    if (flate)
+                    {
+                        st.Position += 2;
+                        var ss = new SubStream(st, len - 2);
+                        ReadStream(new DeflateStream(ss, CompressionMode.Decompress));
                     }
                     else
-                        ReadToken(fs);
-                }
-                if (dict.Count < imgl.Count)
-                {
-                    int max = imgl.Count;
-                    for (int i = 0; i < max; i++)
-                    {
-                        var tup = imgl[i];
-                        Invoke(new Action(() =>
-                        {
-                            label2.Text = string.Format("{0}/{1}", i + 1, max);
-                        }));
-                        var fn = Path.Combine(dir2, string.Format("{0:0000}.jpg", i + 1));
-                        var data = new byte[tup.Item2];
-                        fs.Position = tup.Item1;
-                        fs.Read(data, 0, data.Length);
-                        File.WriteAllBytes(fn, data);
-                    }
+                        ReadStream(new SubStream(st, len));
                 }
                 else
                 {
-                    var pages = dict.Keys.ToList();
-                    pages.Sort();
-                    int max = pages[pages.Count - 1];
-                    foreach (var p in pages)
+                    if (jpeg)
                     {
-                        var id = dict[p];
-                        var tup = imgd[id];
-                        Invoke(new Action(() =>
-                        {
-                            label2.Text = string.Format("{0}/{1}", p, max);
-                        }));
-                        var fn = Path.Combine(dir2, string.Format("{0:0000}.jpg", p));
-                        var data = new byte[tup.Item2];
-                        fs.Position = tup.Item1;
-                        fs.Read(data, 0, data.Length);
-                        File.WriteAllBytes(fn, data);
+                        var tup = new Tuple<long, int>(st.Position, len);
+                        imgd[objno] = tup;
+                        imgc++;
                     }
+                    if (len > 0)
+                        st.Position += len;
+                    else
+                        while (current != "endstream")
+                            ReadToken(st, true);
                 }
+                cur = 0;
+                ReadToken(st);
             }
         }
     }
