@@ -156,22 +156,15 @@ namespace PDF2JPEG
                 var pages = dict.Keys.ToList();
                 pages.Sort();
                 int max = pages[pages.Count - 1];
-                bool rev = pages[0] == 0;
-                if (rev)
-                {
-                    pages.Reverse();
-                    max++;
-                }
                 foreach (var p in pages)
                 {
                     var id = dict[p];
                     var tup = imgd[id];
-                    int pn = rev ? max - p : p;
                     Invoke(new Action(() =>
                     {
-                        label2.Text = string.Format("{0}/{1}", pn, max);
+                        label2.Text = string.Format("{0}/{1}", p, max);
                     }));
-                    var fn = Path.Combine(dir2, string.Format("{0:0000}.jpg", pn));
+                    var fn = Path.Combine(dir2, string.Format("{0:0000}.jpg", p));
                     var data = new byte[tup.Item2];
                     fs.Position = tup.Item1;
                     fs.Read(data, 0, data.Length);
@@ -196,7 +189,7 @@ namespace PDF2JPEG
         {
             ReadToken(st);
             bool jpeg = false, flate = false, objstm = false;
-            int len = 0;
+            int len = 0, imgno = 0;
             while (current != null && current != ">>")
             {
                 if (current == "<<")
@@ -242,13 +235,18 @@ namespace PDF2JPEG
                 else if (current.StartsWith("/Obj"))
                 {
                     ReadToken(st);
-                    if (dict.ContainsKey(page))
-                        throw new Exception("duplicate page " + page);
-                    dict[page] = int.Parse(current);
+                    imgno = int.Parse(current);
                     ReadToken(st);
                 }
                 else
                     ReadToken(st);
+            }
+            if (imgno > 0)
+            {
+                if (page == 0) throw new Exception("page 0");
+                if (dict.ContainsKey(page))
+                    throw new Exception("duplicate page " + page);
+                dict[page] = imgno;
             }
             ReadToken(st);
             if (current == "stream")
