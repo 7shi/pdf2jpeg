@@ -142,7 +142,8 @@ namespace PDF2JPEG
             var dir2 = Path.Combine(dir1, name);
             if (!Directory.Exists(dir2)) Directory.CreateDirectory(dir2);
             var dict = new Dictionary<int, int>();
-            var imgs = new Dictionary<int, Tuple<long, int>>();
+            var imgd = new Dictionary<int, Tuple<long, int>>();
+            var imgl = new List<Tuple<long, int>>();
             using (var fs = new FileStream(file, FileMode.Open))
             {
                 ReadToken(fs);
@@ -200,7 +201,11 @@ namespace PDF2JPEG
                         {
                             if (cur == 0x0d) cur = fs.ReadByte();
                             if (jpeg)
-                                imgs[objno] = new Tuple<long, int>(fs.Position, len);
+                            {
+                                var tup = new Tuple<long, int>(fs.Position, len);
+                                imgd[objno] = tup;
+                                imgl.Add(tup);
+                            }
                             if (len > 0)
                                 fs.Position += len;
                             else
@@ -213,22 +218,42 @@ namespace PDF2JPEG
                     else
                         ReadToken(fs);
                 }
-                var pages = dict.Keys.ToList();
-                pages.Sort();
-                int max = pages[pages.Count - 1];
-                foreach (var p in pages)
+                if (dict.Count > 0 && page == 0)
                 {
-                    var id = dict[p];
-                    var tup = imgs[id];
-                    Invoke(new Action(() =>
+                    int max = imgl.Count;
+                    for (int i = 0; i < max; i++)
                     {
-                        label2.Text = string.Format("{0}/{1}", p, max);
-                    }));
-                    var fn = Path.Combine(dir2, string.Format("{0:0000}.jpg", p));
-                    var data = new byte[tup.Item2];
-                    fs.Position = tup.Item1;
-                    fs.Read(data, 0, data.Length);
-                    File.WriteAllBytes(fn, data);
+                        var tup = imgl[i];
+                        Invoke(new Action(() =>
+                        {
+                            label2.Text = string.Format("{0}/{1}", i + 1, max);
+                        }));
+                        var fn = Path.Combine(dir2, string.Format("{0:0000}.jpg", i + 1));
+                        var data = new byte[tup.Item2];
+                        fs.Position = tup.Item1;
+                        fs.Read(data, 0, data.Length);
+                        File.WriteAllBytes(fn, data);
+                    }
+                }
+                else
+                {
+                    var pages = dict.Keys.ToList();
+                    pages.Sort();
+                    int max = pages[pages.Count - 1];
+                    foreach (var p in pages)
+                    {
+                        var id = dict[p];
+                        var tup = imgd[id];
+                        Invoke(new Action(() =>
+                        {
+                            label2.Text = string.Format("{0}/{1}", p, max);
+                        }));
+                        var fn = Path.Combine(dir2, string.Format("{0:0000}.jpg", p));
+                        var data = new byte[tup.Item2];
+                        fs.Position = tup.Item1;
+                        fs.Read(data, 0, data.Length);
+                        File.WriteAllBytes(fn, data);
+                    }
                 }
             }
         }
