@@ -218,7 +218,7 @@ namespace PDF2JPEG
                     else
                         ReadToken(fs);
                 }
-                if (dict.Count > 0 && page == 0)
+                if (dict.Count < imgl.Count)
                 {
                     int max = imgl.Count;
                     for (int i = 0; i < max; i++)
