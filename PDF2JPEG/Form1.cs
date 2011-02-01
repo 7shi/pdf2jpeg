@@ -5,7 +5,6 @@ using System.Data;
 using System.Drawing;
 using System.IO;
 using System.IO.Compression;
-using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Windows.Forms;
@@ -14,6 +13,8 @@ using iTextSharp.text.pdf;
 
 namespace PDF2JPEG
 {
+    public delegate void Action();
+
     public partial class Form1 : Form
     {
         public Form1()
@@ -77,8 +78,8 @@ namespace PDF2JPEG
         {
             var dir1 = Path.GetDirectoryName(file);
             var fn = Path.GetFileNameWithoutExtension(file);
-            int p1 = fn.LastIndexOf(' ');
-            if (p1 > 0) fn = fn.Substring(0, p1);
+            //int p1 = fn.LastIndexOf(' ');
+            //if (p1 > 0) fn = fn.Substring(0, p1);
             var dir2 = Path.Combine(dir1, fn);
             if (!Directory.Exists(dir2)) Directory.CreateDirectory(dir2);
 
@@ -96,21 +97,22 @@ namespace PDF2JPEG
                 var xobj = PdfReader.GetPdfObject(res.Get(PdfName.XOBJECT)) as PdfDictionary;
                 if (xobj == null) continue;
 
-                var keys = xobj.Keys;
-                if (keys.Count == 0) continue;
+                foreach (var name in xobj.Keys)
+                {
+                    var obj = xobj.Get(name);
+                    if (!obj.IsIndirect()) continue;
 
-                var obj = xobj.Get(keys.ElementAt(0));
-                if (!obj.IsIndirect()) continue;
+                    var tg = PdfReader.GetPdfObject(obj) as PdfDictionary;
+                    var type = PdfReader.GetPdfObject(tg.Get(PdfName.SUBTYPE)) as PdfName;
+                    if (!PdfName.IMAGE.Equals(type)) continue;
 
-                var tg = PdfReader.GetPdfObject(obj) as PdfDictionary;
-                var type = PdfReader.GetPdfObject(tg.Get(PdfName.SUBTYPE)) as PdfName;
-                if (!PdfName.IMAGE.Equals(type)) continue;
-
-                int XrefIndex = (obj as PRIndirectReference).Number;
-                var pdfStream = pdf.GetPdfObject(XrefIndex) as PRStream;
-                var data = PdfReader.GetStreamBytesRaw(pdfStream);
-                var jpeg = Path.Combine(dir2, string.Format("{0:0000}.jpg", i));
-                File.WriteAllBytes(jpeg, data);
+                    int XrefIndex = (obj as PRIndirectReference).Number;
+                    var pdfStream = pdf.GetPdfObject(XrefIndex) as PRStream;
+                    var data = PdfReader.GetStreamBytesRaw(pdfStream);
+                    var jpeg = Path.Combine(dir2, string.Format("{0:0000}.jpg", i));
+                    File.WriteAllBytes(jpeg, data);
+                    break;
+                }
             }
         }
 
