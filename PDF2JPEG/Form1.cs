@@ -22,6 +22,8 @@ namespace PDF2JPEG
             InitializeComponent();
         }
 
+        int state = 0;
+
         protected override void OnDragEnter(DragEventArgs drgevent)
         {
             base.OnDragEnter(drgevent);
@@ -36,6 +38,7 @@ namespace PDF2JPEG
             if (files == null) return;
 
             AllowDrop = false;
+            state = 1;
             var th = new Thread(new ParameterizedThreadStart(ReadPDFs));
             th.Start(files);
         }
@@ -47,6 +50,7 @@ namespace PDF2JPEG
                 var fs = files as string[];
                 for (int i = 0; i < fs.Length; i++)
                 {
+                    if (state != 1) break;
                     Invoke(new Action(() =>
                     {
                         label1.Text = string.Format("{0}/{1}: {2}",
@@ -68,8 +72,15 @@ namespace PDF2JPEG
             {
                 Invoke(new Action(() =>
                 {
-                    AllowDrop = true;
-                    label2.Text += " 完了";
+                    var st = state;
+                    state = 0;
+                    if (st == 2)
+                        Close();
+                    else
+                    {
+                        AllowDrop = true;
+                        label2.Text += " 完了";
+                    }
                 }));
             }
         }
@@ -87,10 +98,13 @@ namespace PDF2JPEG
             int n = pdf.NumberOfPages;
             for (int i = 1; i <= n; i++)
             {
-                Invoke(new Action(() =>
-                {
-                    label2.Text = string.Format("{0}/{1}", i, n);
-                }));
+                if (state == 1)
+                    Invoke(new Action(() =>
+                    {
+                        label2.Text = string.Format("{0}/{1}", i, n);
+                    }));
+                else
+                    break;
 
                 var pg = pdf.GetPageN(i);
                 var res = PdfReader.GetPdfObject(pg.Get(PdfName.RESOURCES)) as PdfDictionary;
@@ -125,6 +139,19 @@ namespace PDF2JPEG
         private void exitToolStripMenuItem_Click(object sender, EventArgs e)
         {
             Close();
+        }
+
+        protected override void OnClosing(CancelEventArgs e)
+        {
+            base.OnClosing(e);
+            if (state == 1)
+            {
+                var result = MessageBox.Show(
+                    this, "処理を中止しますか？", Text,
+                    MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+                if (result == DialogResult.Yes) state = 2;
+            }
+            if (state != 0) e.Cancel = true;
         }
     }
 }
