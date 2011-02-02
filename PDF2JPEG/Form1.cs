@@ -47,17 +47,30 @@ namespace PDF2JPEG
         {
             try
             {
-                var fs = files as string[];
-                for (int i = 0; i < fs.Length; i++)
+                var list = new List<string>();
+                foreach (var f in files as string[])
+                {
+                    if (Directory.Exists(f))
+                        CheckDir(list, f);
+                    else if (File.Exists(f) && Path.GetExtension(f).ToLower() == ".pdf")
+                        list.Add(f);
+                }
+                for (int i = 0; i < list.Count; i++)
                 {
                     if (state != 1) break;
+                    var pdf = list[i];
                     Invoke(new Action(() =>
                     {
                         label1.Text = string.Format("{0}/{1}: {2}",
-                            i + 1, fs.Length, Path.GetFileName(fs[i]));
+                            i + 1, list.Count, Path.GetFileName(pdf));
                         label2.Text = "Parsing...";
                     }));
-                    Parse(fs[i]);
+                    Parse(pdf);
+                    Invoke(new Action(() =>
+                    {
+                        if (deleteToolStripMenuItem.Checked)
+                            File.Delete(pdf);
+                    }));
                 }
             }
             catch (Exception ex)
@@ -83,6 +96,14 @@ namespace PDF2JPEG
                     }
                 }));
             }
+        }
+
+        private void CheckDir(List<string> list, string dir)
+        {
+            foreach (var d in Directory.GetDirectories(dir))
+                CheckDir(list, d);
+            foreach (var pdf in Directory.GetFiles(dir, "*.pdf"))
+                list.Add(pdf);
         }
 
         private void Parse(string file)
@@ -152,6 +173,11 @@ namespace PDF2JPEG
                 if (result == DialogResult.Yes) state = 2;
             }
             if (state != 0) e.Cancel = true;
+        }
+
+        private void deleteToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            deleteToolStripMenuItem.Checked = !deleteToolStripMenuItem.Checked;
         }
     }
 }
