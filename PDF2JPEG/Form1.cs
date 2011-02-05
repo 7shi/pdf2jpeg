@@ -22,8 +22,6 @@ namespace PDF2JPEG
             InitializeComponent();
         }
 
-        int state = 0;
-
         protected override void OnDragEnter(DragEventArgs drgevent)
         {
             base.OnDragEnter(drgevent);
@@ -38,64 +36,7 @@ namespace PDF2JPEG
             if (files == null) return;
 
             AllowDrop = false;
-            state = 1;
-            var th = new Thread(new ParameterizedThreadStart(ReadPDFs));
-            th.Start(files);
-        }
-
-        private void ReadPDFs(object files)
-        {
-            try
-            {
-                var list = new List<string>();
-                foreach (var f in files as string[])
-                {
-                    if (Directory.Exists(f))
-                        CheckDir(list, f);
-                    else if (File.Exists(f) && Path.GetExtension(f).ToLower() == ".pdf")
-                        list.Add(f);
-                }
-                for (int i = 0; i < list.Count; i++)
-                {
-                    if (state != 1) break;
-                    var pdf = list[i];
-                    Invoke(new Action(() =>
-                    {
-                        label1.Text = string.Format("{0}/{1}: {2}",
-                            i + 1, list.Count, Path.GetFileName(pdf));
-                        label2.Text = "Parsing...";
-                    }));
-                    Parse(pdf);
-                    Invoke(new Action(() =>
-                    {
-                        if (deleteToolStripMenuItem.Checked)
-                            File.Delete(pdf);
-                    }));
-                }
-            }
-            catch (Exception ex)
-            {
-                Invoke(new Action(() =>
-                {
-                    MessageBox.Show(ex.ToString());
-                    label2.Text += " " + ex.Message;
-                }));
-            }
-            finally
-            {
-                Invoke(new Action(() =>
-                {
-                    var st = state;
-                    state = 0;
-                    if (st == 2)
-                        Close();
-                    else
-                    {
-                        AllowDrop = true;
-                        label2.Text += " 完了";
-                    }
-                }));
-            }
+            backgroundWorker1.RunWorkerAsync(files);
         }
 
         private void CheckDir(List<string> list, string dir)
@@ -119,13 +60,8 @@ namespace PDF2JPEG
             int n = pdf.NumberOfPages;
             for (int i = 1; i <= n; i++)
             {
-                if (state == 1)
-                    Invoke(new Action(() =>
-                    {
-                        label2.Text = string.Format("{0}/{1}", i, n);
-                    }));
-                else
-                    break;
+                if (backgroundWorker1.CancellationPending) return;
+                backgroundWorker1.ReportProgress(0, new string[] { null, i + "/" + n });
 
                 var pg = pdf.GetPageN(i);
                 var res = PdfReader.GetPdfObject(pg.Get(PdfName.RESOURCES)) as PdfDictionary;
@@ -165,19 +101,71 @@ namespace PDF2JPEG
         protected override void OnClosing(CancelEventArgs e)
         {
             base.OnClosing(e);
-            if (state == 1)
+            if (backgroundWorker1.IsBusy)
             {
                 var result = MessageBox.Show(
                     this, "処理を中止しますか？", Text,
                     MessageBoxButtons.YesNo, MessageBoxIcon.Question);
-                if (result == DialogResult.Yes) state = 2;
+                if (result == DialogResult.No) e.Cancel = true;
             }
-            if (state != 0) e.Cancel = true;
         }
 
         private void deleteToolStripMenuItem_Click(object sender, EventArgs e)
         {
             deleteToolStripMenuItem.Checked = !deleteToolStripMenuItem.Checked;
+        }
+
+        private void backgroundWorker1_DoWork(object sender, DoWorkEventArgs e)
+        {
+            var list = new List<string>();
+            foreach (var f in e.Argument as string[])
+            {
+                if (Directory.Exists(f))
+                    CheckDir(list, f);
+                else if (File.Exists(f) && Path.GetExtension(f).ToLower() == ".pdf")
+                    list.Add(f);
+            }
+            for (int i = 0; i < list.Count; i++)
+            {
+                if (backgroundWorker1.CancellationPending) return;
+                var pdf = list[i];
+                backgroundWorker1.ReportProgress(0, new[]
+                    {
+                        string.Format("{0}/{1}: {2}", i + 1, list.Count, Path.GetFileName(pdf)),
+                        "Parsing..."
+                    });
+                Parse(pdf);
+                backgroundWorker1.ReportProgress(0, pdf);
+            }
+        }
+
+        private void backgroundWorker1_ProgressChanged(object sender, ProgressChangedEventArgs e)
+        {
+            if (e.UserState is string[])
+            {
+                var st = e.UserState as string[];
+                if (st[0] != null) label1.Text = st[0];
+                if (st[1] != null) label2.Text = st[1];
+            }
+            else if (e.UserState is string)
+            {
+                if (deleteToolStripMenuItem.Checked)
+                    File.Delete(e.UserState as string);
+            }
+        }
+
+        private void backgroundWorker1_RunWorkerCompleted(object sender, RunWorkerCompletedEventArgs e)
+        {
+            if (e.Error != null)
+            {
+                MessageBox.Show(e.Error.ToString());
+                label2.Text += " " + e.Error.Message;
+            }
+            else if (!e.Cancelled)
+            {
+                AllowDrop = true;
+                label2.Text += " 完了";
+            }
         }
     }
 }
