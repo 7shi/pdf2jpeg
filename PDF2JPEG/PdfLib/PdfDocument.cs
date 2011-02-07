@@ -190,5 +190,14 @@ namespace PdfLib
         {
             return obj.GetStreamBytes(parser.Lexer.Stream);
         }
+
+        public PdfDictionary GetDictionary(PdfDictionary dict, string key)
+        {
+            if (dict == null) return null;
+            var ret = dict[key];
+            if (ret is PdfReference)
+                ret = this[(ret as PdfReference).Number].Dictionary;
+            return ret as PdfDictionary;
+        }
     }
 }

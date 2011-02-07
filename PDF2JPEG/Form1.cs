@@ -64,9 +64,8 @@ namespace PDF2JPEG
                     backgroundWorker1.ReportProgress(0, new string[] { null, i + "/" + n });
 
                     var page = doc.GetPage(i);
-                    var rsrc = page["/Resources"] as PdfDictionary;
-                    if (rsrc == null) continue;
-                    var xobj = rsrc["/XObject"] as PdfDictionary;
+                    var rsrc = doc.GetDictionary(page.Dictionary, "/Resources");
+                    var xobj = doc.GetDictionary(rsrc, "/XObject");
                     if (xobj == null) continue;
 
                     foreach (var key in xobj.Keys)
@@ -127,10 +126,10 @@ namespace PDF2JPEG
                 if (backgroundWorker1.CancellationPending) return;
                 var pdf = list[i];
                 backgroundWorker1.ReportProgress(0, new[]
-                    {
-                        string.Format("{0}/{1}: {2}", i + 1, list.Count, Path.GetFileName(pdf)),
-                        "Parsing..."
-                    });
+                {
+                    string.Format("{0}/{1}: {2}", i + 1, list.Count, Path.GetFileName(pdf)),
+                    "Parsing..."
+                });
                 Parse(pdf);
                 backgroundWorker1.ReportProgress(0, pdf);
             }
