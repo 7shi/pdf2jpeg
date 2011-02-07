@@ -8,8 +8,7 @@ using System.IO.Compression;
 using System.Text;
 using System.Threading;
 using System.Windows.Forms;
-using iTextSharp.text;
-using iTextSharp.text.pdf;
+using PdfLib;
 
 namespace PDF2JPEG
 {
@@ -56,41 +55,39 @@ namespace PDF2JPEG
             var dir2 = Path.Combine(dir1, fn);
             if (!Directory.Exists(dir2)) Directory.CreateDirectory(dir2);
 
-            var pdf = new PdfReader(file);
-            int n = pdf.NumberOfPages;
-            for (int i = 1; i <= n; i++)
+            using (var doc = new PdfDocument(file))
             {
-                if (backgroundWorker1.CancellationPending) return;
-                backgroundWorker1.ReportProgress(0, new string[] { null, i + "/" + n });
-
-                var pg = pdf.GetPageN(i);
-                var res = PdfReader.GetPdfObject(pg.Get(PdfName.RESOURCES)) as PdfDictionary;
-                var xobj = PdfReader.GetPdfObject(res.Get(PdfName.XOBJECT)) as PdfDictionary;
-                if (xobj == null) continue;
-
-                foreach (var name in xobj.Keys)
+                int n = doc.PageCount;
+                for (int i = 1; i <= n; i++)
                 {
-                    var obj = xobj.Get(name);
-                    if (!obj.IsIndirect()) continue;
+                    if (backgroundWorker1.CancellationPending) return;
+                    backgroundWorker1.ReportProgress(0, new string[] { null, i + "/" + n });
 
-                    var tg = PdfReader.GetPdfObject(obj) as PdfDictionary;
-                    var type = PdfReader.GetPdfObject(tg.Get(PdfName.SUBTYPE)) as PdfName;
-                    if (!PdfName.IMAGE.Equals(type)) continue;
+                    var page = doc.GetPage(i);
+                    var rsrc = page["/Resources"] as PdfDictionary;
+                    if (rsrc == null) continue;
+                    var xobj = rsrc["/XObject"] as PdfDictionary;
+                    if (xobj == null) continue;
 
-                    int XrefIndex = (obj as PRIndirectReference).Number;
-                    var pdfStream = pdf.GetPdfObject(XrefIndex) as PRStream;
-                    var data = PdfReader.GetStreamBytesRaw(pdfStream);
-                    var jpeg = Path.Combine(dir2, string.Format("{0:0000}.jpg", i));
-                    File.WriteAllBytes(jpeg, data);
-                    break;
+                    foreach (var key in xobj.Keys)
+                    {
+                        var r = xobj[key] as PdfReference;
+                        if (r == null) continue;
+
+                        var obj = doc[r.Number];
+                        if (obj == null || (obj["/Subtype"] as string) != "/Image")
+                            continue;
+
+                        var filter = obj["/Filter"] as string;
+                        if (filter != "/DCTDecode") continue;
+
+                        var data = doc.GetStreamBytes(obj);
+                        var jpeg = Path.Combine(dir2, string.Format("{0:0000}.jpg", i));
+                        File.WriteAllBytes(jpeg, data);
+                        break;
+                    }
                 }
             }
-        }
-
-        private void aboutToolStripMenuItem_Click(object sender, EventArgs e)
-        {
-            using (var about = new Form2())
-                about.ShowDialog(this);
         }
 
         private void exitToolStripMenuItem_Click(object sender, EventArgs e)
