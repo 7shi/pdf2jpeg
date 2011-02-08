@@ -9,6 +9,8 @@ namespace PdfLib
     {
         public Stream Stream { get; private set; }
 
+        private PdfLexer() { }
+
         public PdfLexer(Stream stream)
         {
             Stream = stream;
@@ -18,35 +20,54 @@ namespace PdfLib
         {
             cur = 0;
             token2 = token1 = current = null;
-            IsNumber = false;
+            isNumber = false;
+        }
+
+        public PdfLexer Save()
+        {
+            var ret = new PdfLexer();
+            ret.Load(this);
+            return ret;
+        }
+
+        public void Load(PdfLexer lexer)
+        {
+            cur = lexer.cur;
+            objno = lexer.objno;
+            token2 = lexer.token2;
+            token1 = lexer.token1;
+            current = lexer.current;
+            position = lexer.position;
+            isNumber = lexer.isNumber;
+            if (Stream == null)
+                spos = lexer.Stream.Position;
+            else
+                Stream.Position = lexer.spos;
+
         }
 
         private int cur, objno;
         private string token2, token1, current;
+        private long position, spos;
+        private bool isNumber;
 
-        public long Position { get; private set; }
-        public bool IsNumber { get; private set; }
-
+        public long Position { get { return position; } }
+        public bool IsNumber { get { return isNumber; } }
         public int ObjNo { get { return objno; } }
         public string Current { get { return current; } }
 
-        public void ReadToken(bool isStream = false)
+        public void ReadToken()
         {
-            if (!isStream)
-            {
-                token2 = token1;
-                token1 = current;
-                current = ReadTokenInternal();
-                if (current == "obj") objno = int.Parse(token2);
-            }
-            else
-                current = ReadTokenInternal();
+            token2 = token1;
+            token1 = current;
+            current = ReadTokenInternal();
+            if (current == "obj") objno = int.Parse(token2);
         }
 
         private string ReadTokenInternal()
         {
-            IsNumber = false;
-            Position = Stream.Position;
+            isNumber = false;
+            position = Stream.Position;
             if (cur == 0) cur = Stream.ReadByte();
             if (cur == -1) return null;
 
@@ -54,35 +75,72 @@ namespace PdfLib
             for (; cur != -1; cur = Stream.ReadByte())
             {
                 var ch = (char)cur;
-                if (ch == '-' || char.IsDigit(ch))
+                if (ch == '-' || ch == '.' || char.IsDigit(ch))
                 {
+                    bool dot = false;
+                    position = Stream.Position - 1;
                     do
                     {
                         sb.Append((char)cur);
+                        if (cur == '.') dot = true;
                         cur = Stream.ReadByte();
                     }
-                    while (cur != -1 && (cur == '.' || char.IsDigit((char)cur)));
-                    IsNumber = true;
+                    while (cur != -1 && ((!dot && cur == '.') || char.IsDigit((char)cur)));
+                    isNumber = true;
                     break;
                 }
                 else if (ch == '/' || char.IsLetter(ch))
                 {
+                    position = Stream.Position - 1;
                     do
                     {
                         sb.Append((char)cur);
                         cur = Stream.ReadByte();
                     }
-                    while (cur != -1 && (cur == '-' || cur == '_' || char.IsLetterOrDigit((char)cur)));
+                    while (cur != -1 &&
+                        (cur == '-' || cur == '_' || cur == '.' || cur == '#'
+                        || char.IsLetterOrDigit((char)cur)));
+                    break;
+                }
+                else if (ch == '%')
+                {
+                    while (cur != -1 && cur != '\r' && cur != '\n')
+                        cur = Stream.ReadByte();
+                }
+                else if (ch == '(')
+                {
+                    position = Stream.Position - 1;
+                    int prev2 = -1, prev = -1;
+                    do
+                    {
+                        sb.Append((char)cur);
+                        prev2 = prev;
+                        prev = cur;
+                        cur = Stream.ReadByte();
+                    }
+                    while (cur != -1 && !(prev == ')' && prev2 != '\\'));
                     break;
                 }
                 else if (ch > ' ')
                 {
+                    position = Stream.Position - 1;
                     sb.Append(ch);
                     cur = Stream.ReadByte();
                     if ((ch == '<' || ch == '>') && ch == cur)
                     {
                         sb.Append(ch);
                         cur = Stream.ReadByte();
+                    }
+                    else if (ch == '<' && cur != -1)
+                    {
+                        int prev = -1;
+                        do
+                        {
+                            sb.Append((char)cur);
+                            prev = cur;
+                            cur = Stream.ReadByte();
+                        }
+                        while (cur != -1 && prev != '>');
                     }
                     break;
                 }
@@ -162,23 +220,6 @@ namespace PdfLib
             var ret = Stream.Position;
             Stream.Position += len;
             return ret;
-        }
-
-        public double GetValue(PdfDocument doc, object val)
-        {
-            if (val is double)
-                return (long)(double)val;
-            else if (val is PdfReference)
-            {
-                var pos = Stream.Position;
-                var lenref = val as PdfReference;
-                var lenobj = doc[lenref.Number];
-                var ret = (double)lenobj.Object;
-                Stream.Position = pos;
-                return ret;
-            }
-            else
-                throw Abort("unexpected /Length: {0}", val);
         }
     }
 }

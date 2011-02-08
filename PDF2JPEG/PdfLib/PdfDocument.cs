@@ -7,43 +7,45 @@ namespace PdfLib
 {
     public class PdfDocument : IDisposable
     {
-        private PdfParser parser;
         private List<PdfObject> pages = new List<PdfObject>();
+
+        public PdfParser Parser { get; private set; }
 
         public PdfDocument(string pdf)
         {
-            PdfParser parser;
             var fs = new FileStream(pdf, FileMode.Open);
-            parser = new PdfParser(fs);
+            var parser = new PdfParser(this, fs);
             if (parser.Lexer.ReadAscii(4) != "%PDF")
                 throw new Exception("signature is not %PDF");
-            parser.ReadXref(this);
-            this.parser = parser;
+            parser.ReadXref();
+            this.Parser = parser;
 
-            var tr = GetTrailerReferences();
+            var tr = GetTrailerObjects();
             foreach (var key in tr.Keys)
                 this[key].Details = tr[key];
 
-            var rootref = GetTrailer("/Root") as PdfReference;
-            if (rootref == null)
+            var root = GetTrailer("/Root") as PdfObject;
+            if (root == null)
                 throw new Exception("not found: /Root");
-            var root = this[rootref.Number];
+            root.Read(parser);
 
-            var pagesref = root["/Pages"] as PdfReference;
-            if (pagesref == null)
+            var pages = root.GetObject("/Pages");
+            if (pages == null)
                 throw new Exception("not found: /Pages");
-            addPages(this[pagesref.Number]);
+            pages.Read(parser);
+            addPages(pages);
         }
 
         private void addPages(PdfObject p1)
         {
             p1.Details = "/Pages";
-            var kids = p1["/Kids"] as object[];
+            var kids = p1.GetObjects("/Kids");
             if (kids == null)
                 throw new Exception("obj " + p1.Number + ": not found: /Kids");
             for (int i = 0; i < kids.Length; i++)
             {
-                var p2 = this[(kids[i] as PdfReference).Number];
+                var p2 = kids[i] as PdfObject;
+                p2.Read(Parser);
                 if (p2.Type == "/Pages")
                     addPages(p2);
                 else if (p2.Type == "/Page")
@@ -63,8 +65,8 @@ namespace PdfLib
 
         public void Dispose()
         {
-            parser.Lexer.Stream.Dispose();
-            parser = null;
+            Parser.Lexer.Stream.Dispose();
+            Parser = null;
         }
 
         private Dictionary<int, PdfObject> objs = new Dictionary<int, PdfObject>();
@@ -74,15 +76,24 @@ namespace PdfLib
             get
             {
                 var ret = GetObject(no);
-                if (ret != null && !ret.HasRead && parser != null)
-                    ret.Read(this, parser);
+                if (ret != null && !ret.HasRead && Parser != null)
+                {
+                    var state = Parser.Lexer.Save();
+                    ret.Read(Parser);
+                    Parser.Lexer.Load(state);
+                }
                 return ret;
             }
         }
 
         public PdfObject GetObject(int no)
         {
-            return objs.ContainsKey(no) ? objs[no] : null;
+            PdfObject ret = null;
+            if (objs.ContainsKey(no))
+                ret = objs[no];
+            else if (Parser == null)
+                objs.Add(no, ret = new PdfObject(this, no));
+            return ret;
         }
 
         public void Add(PdfObject obj)
@@ -102,13 +113,14 @@ namespace PdfLib
 
         private Dictionary<string, object> trailer = new Dictionary<string, object>();
 
-        public Dictionary<int, string> GetTrailerReferences()
+        public Dictionary<int, string> GetTrailerObjects()
         {
             var ret = new Dictionary<int, string>();
             foreach (var key in trailer.Keys)
             {
-                var r = trailer[key] as PdfReference;
-                if (r != null) ret.Add(r.Number, key);
+                var r = trailer[key] as PdfObject;
+                if (r != null && r.Position > 0)
+                    ret.Add(r.Number, key);
             }
             return ret;
         }
@@ -125,13 +137,13 @@ namespace PdfLib
 
         public object GetTrailer(string key)
         {
-            return trailer[key];
+            return trailer.ContainsKey(key) ? trailer[key] : null;
         }
 
         public string ReadObject(int key)
         {
             var sw = new StringWriter();
-            var stream = parser.Lexer.Stream;
+            var stream = Parser.Lexer.Stream;
             var obj = this[key];
             if (obj.ObjStm == 0)
             {
@@ -139,19 +151,20 @@ namespace PdfLib
                 {
                     stream.Position = obj.Position;
                     if (obj.StreamStart == 0)
-                        sw.WriteLine(parser.Lexer.ReadAscii((int)obj.Length));
+                        sw.WriteLine(Parser.Lexer.ReadAscii((int)obj.Length));
                     else
                     {
                         int len1 = (int)(obj.StreamStart - obj.Position);
                         int len2 = (int)(obj.Length - obj.StreamLength - len1);
-                        var s1 = parser.Lexer.ReadAscii(len1);
+                        var s1 = Parser.Lexer.ReadAscii(len1);
                         stream.Position += obj.StreamLength;
-                        var s2 = parser.Lexer.ReadAscii(len2);
+                        var s2 = Parser.Lexer.ReadAscii(len2);
                         if (s2.StartsWith("\r\n")) s2 = s2.Substring(2);
                         sw.Write(s1);
                         if (!s1.EndsWith("\r\n")) sw.WriteLine();
-                        var filter = obj["/Filter"] as string;
-                        if (filter == null || filter == "/FlateDecode")
+                        var filter = obj.GetText("/Filter");
+                        if (filter == null ||
+                            (filter == "/FlateDecode" && !obj.ContainsKey("/DecodeParms")))
                         {
                             using (var s = obj.GetStream(stream))
                             {
@@ -184,20 +197,6 @@ namespace PdfLib
                 }
             }
             return sw.ToString();
-        }
-
-        public byte[] GetStreamBytes(PdfObject obj)
-        {
-            return obj.GetStreamBytes(parser.Lexer.Stream);
-        }
-
-        public PdfDictionary GetDictionary(PdfDictionary dict, string key)
-        {
-            if (dict == null) return null;
-            var ret = dict[key];
-            if (ret is PdfReference)
-                ret = this[(ret as PdfReference).Number].Dictionary;
-            return ret as PdfDictionary;
         }
     }
 }

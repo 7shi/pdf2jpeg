@@ -9,26 +9,23 @@ namespace PdfLib
     public class PdfDeflateStream : Stream
     {
         private DeflateStream ds;
-        int columns, predicator, position, rowpos;
+        int columns, /*predicator,*/ position, rowpos;
         byte[] prev, rows;
 
         public PdfDeflateStream(Stream s, PdfObject obj)
         {
-            if (obj.Dictionary != null && obj.Dictionary.ContainsKey("/DecodeParms"))
+            var dp = obj.GetObject("/DecodeParms");
+            if (dp != null)
             {
-                var dp = obj["/DecodeParms"] as PdfDictionary;
-                if (dp != null)
+                if (dp.ContainsKey("/Columns"))
                 {
-                    if (dp.ContainsKey("/Columns"))
-                    {
-                        columns = (int)(double)dp["/Columns"];
-                        prev = new byte[columns];
-                        rows = new byte[columns];
-                        rowpos = rows.Length;
-                    }
-                    if (dp.ContainsKey("/Predictor"))
-                        predicator = (int)(double)dp["/Predictor"];
+                    columns = (int)dp.GetValue("/Columns");
+                    prev = new byte[columns];
+                    rows = new byte[columns];
+                    rowpos = rows.Length;
                 }
+                //if (dp.ContainsKey("/Predictor"))
+                //    predicator = (int)(double)dp["/Predictor"];
             }
             s.ReadByte();
             s.ReadByte();
@@ -75,7 +72,10 @@ namespace PdfLib
                 {
                     if (rowpos >= rows.Length)
                     {
-                        if (ds.ReadByte() != 2)
+                        var type = ds.ReadByte();
+                        if (type == -1)
+                            break;
+                        else if (type != 2)
                             throw new Exception("unknown predictor type");
                         Array.Copy(rows, prev, rows.Length);
                         int len = ds.Read(rows, offset, rows.Length);
@@ -84,7 +84,7 @@ namespace PdfLib
                             rows[i] += prev[i];
                         rowpos = 0;
                     }
-                    int rlen = Math.Min(count, rows.Length - rowpos);
+                    int rlen = Math.Min(count - ret, rows.Length - rowpos);
                     Array.Copy(rows, rowpos, buffer, ret, rlen);
                     ret += rlen;
                     rowpos += rlen;

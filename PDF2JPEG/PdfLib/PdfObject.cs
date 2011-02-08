@@ -8,41 +8,43 @@ namespace PdfLib
 {
     public class PdfObject
     {
-        public long Position { get; private set; }
-        public long Length { get; private set; }
-        public string Type { get; private set; }
-        public int Number { get; private set; }
-        public int Index { get; private set; }
-        public PdfDictionary Dictionary { get; private set; }
-        public long StreamStart { get; private set; }
-        public long StreamLength { get; private set; }
-        public object Object { get; private set; }
-        public int ObjStm { get; private set; }
+        private Dictionary<string, object> dict;
+        private PdfDocument doc;
+
+        public long Position;
+        public int Index;
+        public int ObjStm;
+        public object Object;
         public string Details = "";
 
-        public PdfObject(int no, int objstm, int index, long position = 0)
+        public int Number { get; private set; }
+        public string Type { get; private set; }
+        public long Length { get; private set; }
+        public long StreamStart { get; private set; }
+        public long StreamLength { get; private set; }
+
+        public PdfObject(PdfDocument doc, int no)
         {
-            Position = position;
-            Number = no;
-            ObjStm = objstm;
-            Index = index;
-            if (Number == 0) HasRead = true;
+            this.doc = doc;
+            this.Number = no;
         }
 
         public PdfObject(PdfDocument doc, PdfParser parser)
         {
-            Read(doc, parser);
+            this.doc = doc;
+            HasRead = true;
+            ReadDictionary(parser);
         }
 
         public bool HasRead { get; private set; }
 
-        public void Read(PdfDocument doc, PdfParser parser)
+        public void Read(PdfParser parser)
         {
             if (HasRead) return;
             HasRead = true;
             if (ObjStm != 0)
             {
-                doc.GetObject(ObjStm).Read(doc, parser);
+                doc.GetObject(ObjStm).Read(parser);
                 return;
             }
             var lexer = parser.Lexer;
@@ -56,7 +58,8 @@ namespace PdfLib
             }
             if (!lexer.IsNumber)
                 throw lexer.Abort("required: number");
-            Number = int.Parse(lexer.Current);
+            if (Number != int.Parse(lexer.Current))
+                throw lexer.Abort("invalid number: {0}", Number);
             lexer.ReadToken();
             Index = int.Parse(lexer.Current);
             lexer.ReadToken();
@@ -64,12 +67,15 @@ namespace PdfLib
                 throw lexer.Abort("required: obj");
             lexer.ReadToken();
             if (lexer.Current == "<<")
-                readDictionary(parser);
+            {
+                lexer.ReadToken();
+                ReadDictionary(parser);
+            }
             if (lexer.Current == "stream")
             {
-                if (Dictionary == null | !Dictionary.ContainsKey("/Length"))
+                if (dict == null | !dict.ContainsKey("/Length"))
                     throw lexer.Abort("not found: /Length");
-                StreamLength = (long)lexer.GetValue(doc, Dictionary["/Length"]);
+                StreamLength = (long)GetValue("/Length");
                 StreamStart = lexer.SkipStream(StreamLength);
                 lexer.ReadToken();
                 if (lexer.Current != "endstream")
@@ -83,44 +89,24 @@ namespace PdfLib
             Length = lexer.Position + 6 - Position;
             lexer.ReadToken();
             if (Type == "/ObjStm")
-                readObjStm(doc, parser.Lexer);
+                readObjStm(parser.Lexer);
         }
 
-        private void readDictionary(PdfParser parser)
-        {
-            Dictionary = new PdfDictionary(parser);
-            if (Dictionary.ContainsKey("/Type"))
-                Type = Dictionary["/Type"] as string;
-        }
-
-        public Stream GetStream(Stream stream)
-        {
-            stream.Position = StreamStart;
-            var s = new SubStream(stream, StreamLength);
-            if (Dictionary.ContainsKey("/Filter"))
-            {
-                var filter = Dictionary["/Filter"] as string;
-                if (filter == "/FlateDecode")
-                    return new PdfDeflateStream(s, this);
-            }
-            return s;
-        }
-
-        private void readObjStm(PdfDocument doc, PdfLexer lexer)
+        private void readObjStm(PdfLexer lexer)
         {
             using (var s = GetStream(lexer.Stream))
             {
-                if (!Dictionary.ContainsKey("/N"))
+                if (!dict.ContainsKey("/N"))
                     throw new Exception(string.Format(
                         "{0:x} [ObjStm] required: /N", Position));
-                var n = (int)(double)Dictionary["/N"];
-                if (!Dictionary.ContainsKey("/First"))
+                var n = (int)GetValue("/N");
+                if (!dict.ContainsKey("/First"))
                     throw new Exception(string.Format(
                         "{0:x} [ObjStm] required: /First", Position));
-                var first = (int)(double)Dictionary["/First"];
+                var first = (int)GetValue("/First");
                 var objno = new int[n];
                 var objpos = new long[n];
-                var parser = new PdfParser(s);
+                var parser = new PdfParser(doc, s);
                 var lexer2 = parser.Lexer;
                 for (int i = 0; i < n; i++)
                 {
@@ -132,9 +118,12 @@ namespace PdfLib
                 lexer2.ReadToken();
                 for (int i = 0; i < n; i++)
                 {
-                    var obj = doc[objno[i]];
+                    if (lexer2.Current != "<<")
+                        throw lexer2.Abort("required: <<");
+                    lexer2.ReadToken();
+                    var obj = doc.GetObject(objno[i]);
                     obj.HasRead = true;
-                    obj.readDictionary(parser);
+                    obj.ReadDictionary(parser);
                     obj.Position = first + objpos[i];
                     if (i < n - 1)
                         obj.Length = objpos[i + 1] - objpos[i];
@@ -144,9 +133,14 @@ namespace PdfLib
             }
         }
 
-        public object this[string key]
+        public Stream GetStream(Stream stream)
         {
-            get { return Dictionary == null ? null : Dictionary[key]; }
+            var filter = GetText("/Filter");
+            stream.Position = StreamStart;
+            var s = new SubStream(stream, StreamLength);
+            if (filter != null && filter == "/FlateDecode")
+                return new PdfDeflateStream(s, this);
+            return s;
         }
 
         public byte[] GetStreamBytes(Stream stream)
@@ -161,5 +155,100 @@ namespace PdfLib
             }
             return ms.ToArray();
         }
+
+        public byte[] GetStreamBytes()
+        {
+            return GetStreamBytes(doc.Parser.Lexer.Stream);
+        }
+
+        private void ReadDictionary(PdfParser parser)
+        {
+            var lexer = parser.Lexer;
+            if (dict != null)
+                throw lexer.Abort("duplicate read");
+            dict = new Dictionary<string, object>();
+            while (lexer.Current != null)
+            {
+                var key = lexer.Current;
+                lexer.ReadToken();
+                if (key == ">>") break;
+                dict.Add(key, parser.Read());
+            }
+            var type = GetText("/Type");
+            if (type != null) Type = type;
+        }
+
+        public double GetValue(string key)
+        {
+            var obj = this[key];
+            if (obj is PdfObject)
+                obj = (obj as PdfObject).Object;
+            else if (obj is object[])
+                obj = (obj as object[])[0];
+            return (double)obj;
+        }
+
+        public string GetText(string key)
+        {
+            var obj = this[key];
+            if (obj is PdfObject)
+                obj = (obj as PdfObject).Object;
+            else if (obj is object[])
+                obj = (obj as object[])[0];
+            return obj as string;
+        }
+
+        public object[] GetObjects(string key)
+        {
+            var obj = this[key];
+            if (obj is PdfObject)
+                obj = (obj as PdfObject).Object;
+            return obj as object[];
+        }
+
+        public PdfObject GetObject(string key)
+        {
+            return this[key] as PdfObject;
+        }
+
+        public object this[string key]
+        {
+            get
+            {
+                if (dict == null || !dict.ContainsKey(key))
+                    return null;
+                var ret = dict[key];
+                if (ret is PdfObject && doc.Parser != null)
+                {
+                    var obj = ret as PdfObject;
+                    if (!obj.HasRead)
+                    {
+                        var parser = doc.Parser;
+                        var state = parser.Lexer.Save();
+                        obj.Read(parser);
+                        parser.Lexer.Load(state);
+                    }
+                }
+                return ret;
+            }
+        }
+
+        public Dictionary<string, object>.KeyCollection Keys
+        {
+            get { return dict.Keys; }
+        }
+
+        public bool ContainsKey(string key)
+        {
+            return dict != null ? dict.ContainsKey(key) : false;
+        }
+
+        public bool HasValue { get { return Object is double; } }
+        public bool HasText { get { return Object is string; } }
+        public bool HasObjects { get { return Object is object[]; } }
+
+        public double Value { get { return (double)Object; } }
+        public string Text { get { return Object as string; } }
+        public object[] Objects { get { return Object as object[]; } }
     }
 }

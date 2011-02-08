@@ -7,11 +7,13 @@ namespace PdfLib
 {
     public class PdfParser
     {
+        private PdfDocument doc;
         private Stream stream;
         public PdfLexer Lexer { get; private set; }
 
-        public PdfParser(Stream stream)
+        public PdfParser(PdfDocument doc, Stream stream)
         {
+            this.doc = doc;
             this.stream = stream;
             Lexer = new PdfLexer(stream);
         }
@@ -27,21 +29,21 @@ namespace PdfLib
             return PdfLexer.ReadInt64(last, p);
         }
 
-        public void ReadXref(PdfDocument doc)
+        public void ReadXref()
         {
             var xr = readStartXref();
             if (xr == 0) throw new Exception("not find: startxref");
 
             stream.Position = xr;
-            readXref(doc);
+            readXref();
         }
 
-        private void readXref(PdfDocument doc)
+        private void readXref()
         {
             Lexer.ReadToken();
             if (Lexer.Current != "xref")
             {
-                readXrefObject(doc);
+                readXrefObject();
                 return;
             }
             while (Lexer.Current != null)
@@ -49,7 +51,7 @@ namespace PdfLib
                 Lexer.ReadToken();
                 if (Lexer.Current == "trailer")
                 {
-                    readTrailer(doc);
+                    readTrailer();
                     return;
                 }
                 var start = int.Parse(Lexer.Current);
@@ -62,47 +64,43 @@ namespace PdfLib
                     long offset = long.Parse(Lexer.Current);
                     Lexer.ReadToken();
                     int t = int.Parse(Lexer.Current);
-                    if (no == 0 && t != 65535)
-                        throw Lexer.Abort("xref: 0 must be 65535");
                     Lexer.ReadToken();
-                    if (no == 0)
+                    if (Lexer.Current == "n")
                     {
-                        if (Lexer.Current != "f")
-                            throw Lexer.Abort("xref: 0 must be 'f'");
+                        var p = doc.GetObject(no);
+                        if (p.Position == 0 && p.ObjStm == 0)
+                        {
+                            p.Position = offset;
+                            //p.Index = t;
+                        }
                     }
-                    else if (Lexer.Current != "n")
-                        throw Lexer.Abort("xref: must be 'n'");
-                    if (!doc.ContainsKey(no))
-                        doc.Add(new PdfObject(no, 0, 0, offset));
                 }
             }
         }
 
-        private void readXrefObject(PdfDocument doc)
+        private void readXrefObject()
         {
-            var obj = new PdfObject(doc, this);
+            var obj = new PdfObject(doc, int.Parse(Lexer.Current));
+            obj.Read(this);
             if (doc.ContainsKey(obj.Number)) return;
             doc.Add(obj);
             if (obj.Type != "/XRef" || obj.StreamLength == 0)
                 throw Lexer.Abort("required: xref");
-            if (obj.Dictionary == null)
-                throw Lexer.Abort("required: << ... >>");
-            if (!obj.Dictionary.ContainsKey("/W"))
-                throw Lexer.Abort("required: /W");
-            var w = obj["/W"] as object[];
+            obj.Details = obj.Type;
+            var w = obj.GetObjects("/W");
             if (w == null || w.Length != 3)
                 throw Lexer.Abort("required: /W [ n n n ]");
             var ww = new int[3];
             for (int i = 0; i < 3; i++) ww[i] = (int)(double)w[i];
             int size = 0;
-            if (obj.Dictionary.ContainsKey("/Size"))
-                size = (int)(double)obj["/Size"];
+            if (obj.ContainsKey("/Size"))
+                size = (int)obj.GetValue("/Size");
             int[] index = null;
-            if (obj.Dictionary.ContainsKey("/Index"))
+            if (obj.ContainsKey("/Index"))
             {
-                var idx = obj["/Index"] as object[];
-                if (idx == null || idx.Length != 2)
-                    throw Lexer.Abort("required: /Index [ n n ]");
+                var idx = obj.GetObjects("/Index");
+                if (idx == null || idx.Length == 0 || (idx.Length & 1) != 0)
+                    throw Lexer.Abort("required: /Index [ n n ... ]");
                 index = new int[idx.Length];
                 for (int i = 0; i < idx.Length; i++)
                     index[i] = (int)(double)idx[i];
@@ -112,7 +110,7 @@ namespace PdfLib
 
             foreach (var key in new[] { "/Root", "/Size", "/Info", "/ID" })
             {
-                if (obj.Dictionary.ContainsKey(key) && !doc.ContainsTrailer(key))
+                if (obj.ContainsKey(key) && !doc.ContainsTrailer(key))
                     doc.AddTrailer(key, obj[key]);
             }
 
@@ -126,22 +124,29 @@ namespace PdfLib
                         var type = ww[0] == 0 ? 1 : ReadToInt64(s, ww[0]);
                         var f2 = ReadToInt64(s, ww[1]);
                         var f3 = ReadToInt64(s, ww[2]);
-                        if (!doc.ContainsKey(j))
+                        if (type == 0) continue;
+                        var p = doc.GetObject(j);
+                        if (f2 > 0 && p.Position == 0 && p.ObjStm == 0)
                         {
                             if (type == 1)
-                                doc.Add(new PdfObject(j, 0, 0, f2));
+                                p.Position = f2;
                             else if (type == 2)
-                                doc.Add(new PdfObject(j, (int)f2, (int)f3));
+                            {
+                                p.ObjStm = (int)f2;
+                                p.Index = (int)f3;
+                                var objstm = doc.GetObject((int)f2);
+                                objstm.Details = "/ObjStm";
+                            }
                         }
                     }
                 }
             }
 
             Lexer.Clear();
-            if (obj.Dictionary.ContainsKey("/Prev"))
+            if (obj.ContainsKey("/Prev"))
             {
-                stream.Position = (long)(double)obj["/Prev"];
-                readXref(doc);
+                stream.Position = (long)obj.GetValue("/Prev");
+                readXref();
             }
         }
 
@@ -157,48 +162,49 @@ namespace PdfLib
             return ret;
         }
 
-        private void readTrailer(PdfDocument doc)
+        private void readTrailer()
         {
             Lexer.ReadToken();
             if (Lexer.Current != "<<")
                 throw Lexer.Abort("required: <<");
-            var dic = new PdfDictionary(this);
+            Lexer.ReadToken();
+            var dict = new PdfObject(doc, this);
             long? prev = null, xrefstm = null;
-            foreach (var key in dic.Keys)
+            foreach (var key in dict.Keys)
             {
                 if (key == "/Prev")
-                    prev = (long)(double)dic[key];
+                    prev = (long)dict.GetValue(key);
                 else if (key == "/XRefStm")
-                    xrefstm = (long)(double)dic[key];
+                    xrefstm = (long)dict.GetValue(key);
                 else if (!doc.ContainsTrailer(key))
-                    doc.AddTrailer(key, dic[key]);
+                    doc.AddTrailer(key, dict[key]);
             }
             if (xrefstm != null)
             {
                 stream.Position = (long)prev;
                 Lexer.Clear();
                 Lexer.ReadToken();
-                readXrefObject(doc);
+                readXrefObject();
             }
             else if (prev != null)
             {
                 stream.Position = (long)prev;
                 Lexer.Clear();
-                readXref(doc);
+                readXref();
             }
         }
 
-        private object cache;
+        private double? cache;
 
         public object Read()
         {
             if (cache != null)
             {
-                var ret = cache;
+                var ret = cache.Value;
                 cache = null;
                 return ret;
             }
-            if (Lexer.IsNumber)
+            else if (Lexer.IsNumber)
             {
                 var num = double.Parse(Lexer.Current);
                 Lexer.ReadToken();
@@ -209,19 +215,18 @@ namespace PdfLib
                     if (Lexer.Current == "R")
                     {
                         Lexer.ReadToken();
-                        return new PdfReference((int)num, (int)num2);
+                        return doc.GetObject((int)num);
                     }
                     else
-                    {
                         cache = num2;
-                        return num;
-                    }
                 }
-                else
-                    return num;
+                return num;
             }
             else if (Lexer.Current == "<<")
-                return new PdfDictionary(this);
+            {
+                Lexer.ReadToken();
+                return new PdfObject(doc, this);
+            }
             else if (Lexer.Current == "[")
             {
                 var list = new List<object>();
@@ -237,35 +242,12 @@ namespace PdfLib
                 }
                 return list.ToArray();
             }
-            else if (Lexer.Current == "<")
-                return ReadTo('>');
-            else if (Lexer.Current == "(")
-                return ReadTo(')');
             else
             {
                 var ret = Lexer.Current;
                 Lexer.ReadToken();
                 return ret;
             }
-        }
-
-        private string ReadTo(char end)
-        {
-            var sb = new StringBuilder(Lexer.Current);
-            for (; ; )
-            {
-                int b = stream.ReadByte();
-                if (b == -1) break;
-                var ch = (char)b;
-                sb.Append(ch);
-                if (ch == end)
-                {
-                    Lexer.Clear();
-                    Lexer.ReadToken();
-                    break;
-                }
-            }
-            return sb.ToString();
         }
     }
 }

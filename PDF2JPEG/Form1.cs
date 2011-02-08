@@ -64,26 +64,22 @@ namespace PDF2JPEG
                     backgroundWorker1.ReportProgress(0, new string[] { null, i + "/" + n });
 
                     var page = doc.GetPage(i);
-                    var rsrc = doc.GetDictionary(page.Dictionary, "/Resources");
-                    var xobj = doc.GetDictionary(rsrc, "/XObject");
+                    var rsrc = page.GetObject("/Resources");
+                    if (rsrc == null) continue;
+                    var xobj = rsrc.GetObject("/XObject");
                     if (xobj == null) continue;
 
                     foreach (var key in xobj.Keys)
                     {
-                        var r = xobj[key] as PdfReference;
-                        if (r == null) continue;
-
-                        var obj = doc[r.Number];
-                        if (obj == null || (obj["/Subtype"] as string) != "/Image")
-                            continue;
-
-                        var filter = obj["/Filter"] as string;
-                        if (filter != "/DCTDecode") continue;
-
-                        var data = doc.GetStreamBytes(obj);
-                        var jpeg = Path.Combine(dir2, string.Format("{0:0000}.jpg", i));
-                        File.WriteAllBytes(jpeg, data);
-                        break;
+                        var obj = xobj.GetObject(key);
+                        if (obj != null
+                            && obj.GetText("/Subtype") == "/Image"
+                            && obj.GetText("/Filter") == "/DCTDecode")
+                        {
+                            File.WriteAllBytes(
+                                Path.Combine(dir2, string.Format("{0:0000}.jpg", i)),
+                                obj.GetStreamBytes());
+                        }
                     }
                 }
             }

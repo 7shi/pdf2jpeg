@@ -50,12 +50,10 @@
       <DependentUpon>Form1.cs</DependentUpon>
     </Compile>
     <Compile Include="PdfLib\PdfDeflateStream.cs" />
-    <Compile Include="PdfLib\PdfDictionary.cs" />
     <Compile Include="PdfLib\PdfDocument.cs" />
     <Compile Include="PdfLib\PdfLexer.cs" />
     <Compile Include="PdfLib\PdfObject.cs" />
     <Compile Include="PdfLib\PdfParser.cs" />
-    <Compile Include="PdfLib\PdfReference.cs" />
     <Compile Include="PdfLib\SubStream.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
