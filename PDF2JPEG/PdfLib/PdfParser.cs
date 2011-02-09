@@ -65,14 +65,11 @@ namespace PdfLib
                     Lexer.ReadToken();
                     int t = int.Parse(Lexer.Current);
                     Lexer.ReadToken();
-                    if (Lexer.Current == "n")
+                    if (offset > 0 && Lexer.Current == "n")
                     {
                         var p = doc.GetObject(no);
                         if (p.Position == 0 && p.ObjStm == 0)
-                        {
                             p.Position = offset;
-                            //p.Index = t;
-                        }
                     }
                 }
             }
@@ -122,6 +119,8 @@ namespace PdfLib
                     for (int j = index[i]; j < end; j++)
                     {
                         var type = ww[0] == 0 ? 1 : ReadToInt64(s, ww[0]);
+                        if (type < 0 || type > 2)
+                            throw Lexer.Abort("invalid type: {0}", type);
                         var f2 = ReadToInt64(s, ww[1]);
                         var f3 = ReadToInt64(s, ww[2]);
                         if (type == 0) continue;
@@ -247,6 +246,36 @@ namespace PdfLib
                 var ret = Lexer.Current;
                 Lexer.ReadToken();
                 return ret;
+            }
+        }
+
+        public void ReadLinear()
+        {
+            PdfObject root = null;
+            stream.Position = 0;
+            long len = stream.Length;
+            int p = 0;
+            for (; ; )
+            {
+                Lexer.ReadToken();
+                if (Lexer.Current == null)
+                    break;
+                else if (Lexer.Current == "obj")
+                {
+                    int pp = (int)(Lexer.ObjPos * 100 / len);
+                    if (p != pp) doc.Progress(p = pp);
+                    var obj = doc.GetObject(Lexer.ObjNo);
+                    System.Diagnostics.Debug.Print("{0} {1}", Lexer.ObjPos, Lexer.ObjNo);
+                    obj.Init(Lexer.ObjPos);
+                    obj.Read(this);
+                    if (obj.Type == "/Catalog") root = obj;
+                }
+            }
+            doc.Progress(100);
+            if (root != null)
+            {
+                root.Details = "/Root";
+                doc.AddTrailer("/Root", root);
             }
         }
     }

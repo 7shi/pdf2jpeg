@@ -8,16 +8,27 @@ namespace PdfLib
     public class PdfDocument : IDisposable
     {
         private List<PdfObject> pages = new List<PdfObject>();
+        private Action<int> progress;
 
         public PdfParser Parser { get; private set; }
 
-        public PdfDocument(string pdf)
+        public PdfDocument(string pdf, Action<int> progress = null)
         {
+            this.progress = progress;
             var fs = new FileStream(pdf, FileMode.Open);
             var parser = new PdfParser(this, fs);
             if (parser.Lexer.ReadAscii(4) != "%PDF")
                 throw new Exception("signature is not %PDF");
-            parser.ReadXref();
+            try
+            {
+                parser.ReadXref();
+            }
+            catch
+            {
+                objs.Clear();
+            }
+            if (objs.Count == 0)
+                parser.ReadLinear();
             this.Parser = parser;
 
             var tr = GetTrailerObjects();
@@ -197,6 +208,11 @@ namespace PdfLib
                 }
             }
             return sw.ToString();
+        }
+
+        public void Progress(int p)
+        {
+            if (progress != null) progress(p);
         }
     }
 }

@@ -19,6 +19,7 @@ namespace PdfLib
         public void Clear()
         {
             cur = 0;
+            objpos = pos2 = pos1 = position = 0;
             token2 = token1 = current = null;
             isNumber = false;
         }
@@ -37,6 +38,9 @@ namespace PdfLib
             token2 = lexer.token2;
             token1 = lexer.token1;
             current = lexer.current;
+            objpos = lexer.objpos;
+            pos2 = lexer.pos2;
+            pos1 = lexer.pos1;
             position = lexer.position;
             isNumber = lexer.isNumber;
             if (Stream == null)
@@ -48,20 +52,27 @@ namespace PdfLib
 
         private int cur, objno;
         private string token2, token1, current;
-        private long position, spos;
+        private long objpos, pos2, pos1, position, spos;
         private bool isNumber;
 
         public long Position { get { return position; } }
         public bool IsNumber { get { return isNumber; } }
+        public long ObjPos { get { return objpos; } }
         public int ObjNo { get { return objno; } }
         public string Current { get { return current; } }
 
         public void ReadToken()
         {
+            pos2 = pos1;
+            pos1 = position;
             token2 = token1;
             token1 = current;
             current = ReadTokenInternal();
-            if (current == "obj") objno = int.Parse(token2);
+            if (current == "obj")
+            {
+                objpos = pos2;
+                objno = int.Parse(token2);
+            }
         }
 
         private string ReadTokenInternal()
@@ -213,13 +224,58 @@ namespace PdfLib
             return new Exception(string.Format("{0:x} [{1}] {2}", Position, current, msg));
         }
 
-        public long SkipStream(long len)
+        public long GetStreamStart()
         {
             if (cur == 0x0d) Stream.ReadByte();
-            Clear();
-            var ret = Stream.Position;
-            Stream.Position += len;
-            return ret;
+            return Stream.Position;
+        }
+
+        public bool SearchAscii(string target)
+        {
+            if (string.IsNullOrEmpty(target)) return false;
+
+            var t = new byte[target.Length];
+            for (int i = 0; i < target.Length; i++)
+            {
+                var ch = target[i];
+                t[i] = (byte)(ch < 256 ? ch : '?');
+            }
+            var s = t[0];
+            var buf = new byte[256];
+            var buf2 = new byte[t.Length];
+            for (; ; )
+            {
+                var p = Stream.Position;
+                int len = Stream.Read(buf, 0, buf.Length);
+                if (len < 0) break;
+                bool change = false;
+                for (int i = 0; i < len; i++)
+                {
+                    if (buf[i] == s)
+                    {
+                        change = true;
+                        Stream.Position = p + i;
+                        int len2 = Stream.Read(buf2, 0, buf2.Length);
+                        if (len2 < buf2.Length) return false;
+                        bool ok = true;
+                        for (int j = 0; j < t.Length; j++)
+                        {
+                            if (t[j] != buf2[j])
+                            {
+                                ok = false;
+                                break;
+                            }
+                        }
+                        if (ok)
+                        {
+                            position = p + i;
+                            return true;
+                        }
+                    }
+                }
+                if (change) Stream.Position = p + len;
+            }
+            return false;
         }
     }
 }

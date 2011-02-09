@@ -65,7 +65,13 @@ namespace PdfLib
         {
             int ret = 0;
             if (columns == 0)
-                ret = ds.Read(buffer, offset, count);
+            {
+                try
+                {
+                    ret = ds.Read(buffer, offset, count);
+                }
+                catch { }
+            }
             else
             {
                 while (ret < count)
@@ -78,7 +84,12 @@ namespace PdfLib
                         else if (type != 2)
                             throw new Exception("unknown predictor type");
                         Array.Copy(rows, prev, rows.Length);
-                        int len = ds.Read(rows, offset, rows.Length);
+                        int len = 0;
+                        try
+                        {
+                            len = ds.Read(rows, offset, rows.Length);
+                        }
+                        catch { }
                         if (len < rows.Length) break;
                         for (int i = 0; i < rows.Length; i++)
                             rows[i] += prev[i];
