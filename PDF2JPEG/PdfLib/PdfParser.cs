@@ -78,6 +78,7 @@ namespace PdfLib
         private void readXrefObject()
         {
             var obj = new PdfObject(doc, int.Parse(Lexer.Current));
+            obj.Position = Lexer.Position;
             obj.Read(this);
             if (doc.ContainsKey(obj.Number)) return;
             doc.Add(obj);
